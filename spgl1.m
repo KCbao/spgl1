@@ -1,4 +1,4 @@
-function [x,r,g,info] = spgl1( A, b, tau, sigma, x, options )
+function [x,r,g,info] = spgl1KC( A, b, tau, sigma, x, options)
 %SPGL1  Solve basis pursuit, basis pursuit denoise, and LASSO
 %
 % [x, r, g, info] = spgl1(A, b, tau, sigma, x0, options)
@@ -32,7 +32,7 @@ function [x,r,g,info] = spgl1( A, b, tau, sigma, x, options )
 % options  is a structure of options from spgSetParms. Any unset options
 %          are set to their default value; set options=[] to use all
 %          default values.
-%
+% 
 % OUTPUTS
 % =======
 % x        is a solution of the problem
@@ -308,14 +308,16 @@ printf(' %-22s: %8.2e %4s' ,'Basis pursuit tol' ,bpTol   ,'');
 printf(' %-22s: %8i\n'     ,'Maximum iterations',maxIts     );
 printf('\n');
 if singleTau
-   logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i';
-   logH = ' %5s  %13s  %13s  %9s  %6s  %6s  %6s\n';
-   printf(logH,'Iter','Objective','Relative Gap','gNorm','stepG','nnzX','nnzG');
+   %logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i';
+   logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i %13.7e';
+   logH = ' %5s  %13s  %13s  %9s  %6s  %6s  %6s %13s \n';
+   printf(logH,'Iter','Objective','Relative Gap','gNorm','stepG','nnzX','nnzG','Gap_accel-Gap');
 else
-   logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i';
+   %logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i';
+   logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i %13.7e';
    logH = ' %5s  %13s  %13s  %9s  %9s  %6s  %6s  %6s  %13s\n';
    printf(logH,'Iter','Objective','Relative Gap','Rel Error',...
-          'gNorm','stepG','nnzX','nnzG','tau');
+          'gNorm','stepG','nnzX','nnzG','tau','Gap_accel-Gap');
 end    
     
 % Project the starting point and evaluate function and gradient.
@@ -330,6 +332,9 @@ fBest     = f;
 xBest     = x;
 fOld      = f;
 
+%set number for K: the number of iterations in averaging
+K=5;
+
 % Compute projected gradient direction and initial steplength.
 dx     = project(x - g, tau) - x;
 dxNorm = norm(dx,inf);
@@ -339,24 +344,47 @@ else
    gStep = min( stepMax, max(stepMin, 1/dxNorm) );
 end
 
+R=r;
+
 %----------------------------------------------------------------------
 % MAIN LOOP.
 %----------------------------------------------------------------------
-while 1
+while 1 
     
     %------------------------------------------------------------------
     % Test exit conditions.
     %------------------------------------------------------------------
-
+    
+   
     % Compute quantities needed for log and exit conditions.
     gNorm   = options.dual_norm(-g,weights);
     rNorm   = norm(r, 2);
     gap     = r'*(r-b) + tau*gNorm;
     rGap    = abs(gap) / max(1,f);
+    
     aError1 = rNorm - sigma;
     aError2 = f - sigma^2 / 2;
     rError1 = abs(aError1) / max(1,rNorm);
     rError2 = abs(aError2) / max(1,f);
+    diff=0; % default diff (gap_accel-gap)
+     %Check if need to use extrapolation
+    if iter>= K 
+        R=R(:,end-K:end);
+        U=R(:,2:end)-R(:,1:end-1);
+        oneK=ones(K,1);
+        if det(U'*U) ~=0
+            z=U'*U \ oneK; 
+            c=z./(z'*oneK);
+            raccel=R(:,end:-1:2)*c;
+            gap_accel=raccel'*(r-b) + tau*options.dual_norm(Aprod(raccel,2),weights);
+            rGap_accel    = abs(gap_accel) / max(1,f);
+        else
+            rGap_accel=rGap;
+        end
+        %printf('Diff=', rGap_accel-rGap,'yes!');
+        diff=rGap_accel-rGap; %% update diff (gap_accel-gap)
+    end
+    
 
     % Count number of consecutive iterations with identical support.
     nnzOld = nnzIdx;
@@ -369,12 +397,16 @@ while 1
        if nnzIter >= activeSetIt, stat=EXIT_ACTIVE_SET; end
     end
     
+    if iter >= K
+           rGap=rGap_accel;
+    end
+    
     % Single tau: Check if we're optimal.
     % The 2nd condition is there to guard against large tau.
     if singleTau
-       if rGap <= optTol || rNorm < optTol*bNorm
-          stat  = EXIT_OPTIMAL;
-       end
+        if rGap <= optTol || rNorm < optTol*bNorm
+                stat  = EXIT_OPTIMAL;
+        end
  
     % Multiple tau: Check if found root and/or if tau needs updating.
     else
@@ -384,7 +416,10 @@ while 1
           stat = EXIT_LEAST_SQUARES;
        end
        
-       if rGap <= max(optTol, rError2) || rError1 <= optTol
+       if iter >= K
+           rGap=rGap_accel;
+       end
+       if rGap<= max(optTol, rError2) || rError1 <= optTol
           % The problem is nearly optimal for the current tau.
           % Check optimality of the current root.
           test1 = rNorm       <=   bpTol * bNorm;
@@ -442,12 +477,14 @@ while 1
        if printTau, tauFlag = sprintf(' %13.7e',tau);   end
        if subspace, subFlag = sprintf(' S %2i',itnLSQR); end
        if singleTau
-          printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG);
+          %printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG);
+          printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG,diff);
           if subspace
              printf('  %s',subFlag);
           end
        else
-          printf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG);
+          %printf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG);
+          printf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG,diff);
           if printTau || subspace
              printf(' %s',[tauFlag subFlag]);
           end
@@ -597,6 +634,7 @@ while 1
           xBest = x;
        end
     end
+    R=[R r];
 
 end % while 1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
