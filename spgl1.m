@@ -1,4 +1,4 @@
-function [x,r,g,info] = spgl1KC( A, b, tau, sigma, x, options)
+function [x,r,g,info] = spgl1( A, b, tau, sigma, x, options)
 %SPGL1  Solve basis pursuit, basis pursuit denoise, and LASSO
 %
 % [x, r, g, info] = spgl1(A, b, tau, sigma, x0, options)
@@ -308,16 +308,14 @@ printf(' %-22s: %8.2e %4s' ,'Basis pursuit tol' ,bpTol   ,'');
 printf(' %-22s: %8i\n'     ,'Maximum iterations',maxIts     );
 printf('\n');
 if singleTau
-   %logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i';
-   logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i %13.7e';
-   logH = ' %5s  %13s  %13s  %9s  %6s  %6s  %6s %13s \n';
-   printf(logH,'Iter','Objective','Relative Gap','gNorm','stepG','nnzX','nnzG','Gap_accel-Gap');
+   logB = ' %5i  %13.7e  %13.7e  %9.2e  %6.1f  %6i  %6i';
+   logH = ' %5s  %13s  %13s  %9s  %6s  %6s  %6s  %5s\n';
+   printf(logH,'Iter','Objective','Relative Gap','gNorm','stepG','nnzX','nnzG','Relative Accel Gap');
 else
-   %logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i';
-   logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i %13.7e';
-   logH = ' %5s  %13s  %13s  %9s  %9s  %6s  %6s  %6s  %13s\n';
-   printf(logH,'Iter','Objective','Relative Gap','Rel Error',...
-          'gNorm','stepG','nnzX','nnzG','tau','Gap_accel-Gap');
+   logB = ' %5i  %13.7e  %13.7e  %9.2e  %9.3e  %6.1f  %6i  %6i  %6i';
+   logH = ' %5s  %13s  %13s  %9s  %9s  %6s  %6s  %6s  %6s  %6s \n';
+   printf(logH,'Iter','Objective','   Relative Gap','Rel Error',...
+          'gNorm',' stepG','  nnzX','  nnzG','           tau',' Relative Accel Gap');
 end    
     
 % Project the starting point and evaluate function and gradient.
@@ -332,8 +330,14 @@ fBest     = f;
 xBest     = x;
 fOld      = f;
 
+
 %set number for K: the number of iterations in averaging
-K=5;
+K=15; %or K=10
+Rr=r;
+fDualMax  = -Inf;
+fDualMax2 = -Inf;
+
+
 
 % Compute projected gradient direction and initial steplength.
 dx     = project(x - g, tau) - x;
@@ -344,7 +348,6 @@ else
    gStep = min( stepMax, max(stepMin, 1/dxNorm) );
 end
 
-R=r;
 
 %----------------------------------------------------------------------
 % MAIN LOOP.
@@ -354,37 +357,91 @@ while 1
     %------------------------------------------------------------------
     % Test exit conditions.
     %------------------------------------------------------------------
-    
+   
    
     % Compute quantities needed for log and exit conditions.
-    gNorm   = options.dual_norm(-g,weights);
+    gNorm   = options.dual_norm(-g,weights); %\|A^T r\|_inf
     rNorm   = norm(r, 2);
     gap     = r'*(r-b) + tau*gNorm;
     rGap    = abs(gap) / max(1,f);
+    
+    fDual = -(r'*r)/2 + b'*r - tau*gNorm;
+    fDualMax = max(fDual, fDualMax);
     
     aError1 = rNorm - sigma;
     aError2 = f - sigma^2 / 2;
     rError1 = abs(aError1) / max(1,rNorm);
     rError2 = abs(aError2) / max(1,f);
-    diff=0; % default diff (gap_accel-gap)
-     %Check if need to use extrapolation
-    if iter>= K 
-        R=R(:,end-K:end);
-        U=R(:,2:end)-R(:,1:end-1);
-        oneK=ones(K,1);
-        if det(U'*U) ~=0
-            z=U'*U \ oneK; 
-            c=z./(z'*oneK);
-            raccel=R(:,end:-1:2)*c;
-            gap_accel=raccel'*(r-b) + tau*options.dual_norm(Aprod(raccel,2),weights);
-            rGap_accel    = abs(gap_accel) / max(1,f);
-        else
-            rGap_accel=rGap;
-        end
-        %printf('Diff=', rGap_accel-rGap,'yes!');
-        diff=rGap_accel-rGap; %% update diff (gap_accel-gap)
-    end
     
+    
+    if iter>= K 
+    %if (true)
+        % TODO: Reset R when updating tau (check)
+        
+        % TODO: Warm start with c = [1,0,...,0,lambda] (check)
+        
+        % TODO: QR of [raccel, R] (check)
+        
+        % TODO: Grow R with latest r, up to K or (K-1) columns, window
+        % (check)
+        
+        % TODO: Choose solver for quadratic programming
+        % pdco by michael saunder, comment out "print"
+        % time how long it takes to solve quad programming (check)
+        
+        % TODO: Decide the number of vectors to keep (tune K) (check)
+        
+        if iter == K 
+            Rr=Rr(:,end-K+1:end); % window, dim: n x K [r1,...rk]
+        else
+            Rr=Rr(:,end-K+2:end); % window, dim: n x K [r2,...rk]
+            Rr=[ydual Rr];   %[raccel Rr]
+        end
+        
+        [Q,R]=qr(Rr,0); %get the orthog space of Rr, not full QR
+        % TODO: Add weights to the inf norm inequality. (check)
+        % TODO: Make sure that the primal/dual norm is l1/linf (e.g., not
+        %       l1,2 or the like)
+        
+        %tic();
+        %quadprog:
+        %optionsQuad = optimoptions(@quadprog,'Algorithm','trust-region-reflective','Display','off');
+        %[v,fquad,exitflag]=quadprog([eye(K), zeros(K,1);zeros(1,K) 0], [-Q'*b;tau],[A'*Q -ones(n,1);-A'*Q -ones(n,1)],zeros(2*n,1)); 
+        %quadtime=toc()
+        
+        %pdco:
+        
+        %Set options for pdco
+        options1 = pdcoSet;
+        options1.Method=22;
+        options1.Print=0;
+        
+        %Set the parameters for pdco
+        H=sparse(K+1+2*n, K+1+2*n); 
+        H(1:K, 1:K)=Q'*Q;
+        c=[-Q'*b;tau; sparse(2*n,1)]; 
+        objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
+        Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
+        bvec=sparse(2*n, 1); 
+        bl=[-Inf(K+1,1);sparse(2*n,1)]; 
+        bu=Inf(K+1+2*n,1);
+        v0=[1;zeros(K+2*n,1)];
+        
+       
+        [v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        
+        
+        ydual=Q*v(1:K,1); %v=[c,lambda]
+        ydual_Norm=norm(ydual,2);
+        gNorm_accel=options.dual_norm(Aprod(ydual,2),weights);
+        f_base  = (r'*r)/2; %primal value
+        f_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
+        gap_accel = f_base - f_accel;
+        rGap_accel    = abs(gap_accel) / max(1,f_base);
+        fDualMax2 = max(fDual,fDualMax2);
+        
+    end
+     
 
     % Count number of consecutive iterations with identical support.
     nnzOld = nnzIdx;
@@ -397,10 +454,12 @@ while 1
        if nnzIter >= activeSetIt, stat=EXIT_ACTIVE_SET; end
     end
     
-    if iter >= K
-           rGap=rGap_accel;
-    end
     
+   if iter < K
+     rGap_accel=0;
+   end
+       
+       
     % Single tau: Check if we're optimal.
     % The 2nd condition is there to guard against large tau.
     if singleTau
@@ -416,9 +475,6 @@ while 1
           stat = EXIT_LEAST_SQUARES;
        end
        
-       if iter >= K
-           rGap=rGap_accel;
-       end
        if rGap<= max(optTol, rError2) || rError1 <= optTol
           % The problem is nearly optimal for the current tau.
           % Check optimality of the current root.
@@ -456,6 +512,10 @@ while 1
              r = b - Aprod(x,1);  % r = b - Ax
              g =   - Aprod(r,2);  % g = -A'r
              f = r'*r / 2;
+             Rr=r; %reset Rr
+             X=x;  %reset x
+             fDualMax  = -Inf; %reset fDualMax
+             fDualMax2 = -Inf;  %reset fDualMax2
              
              % Reset the function value history.
              lastFv = -inf(nPrevVals,1);  % Last m function values.
@@ -474,19 +534,23 @@ while 1
     %------------------------------------------------------------------
     if logLevel >= 2 || singleTau || printTau || iter == 0 || stat
        tauFlag = '              '; subFlag = '';
-       if printTau, tauFlag = sprintf(' %13.7e',tau);   end
+       if printTau, tauFlag = sprintf(' %13.7e',tau);   end 
        if subspace, subFlag = sprintf(' S %2i',itnLSQR); end
        if singleTau
           %printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG);
-          printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG,diff);
+          printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG,rGap_accel);
+          %printf('%.5e %.5e', fDualMax,fDualMax2);
+          printf('[%.5e %.5e]',rGap,rGap_accel);
+          if (fDualMax2 > fDualMax), printf('***'); end
           if subspace
              printf('  %s',subFlag);
           end
        else
           %printf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG);
-          printf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG,diff);
+          ttau=sprintf(logB,iter,rNorm,rGap,rError1,gNorm,log10(stepG),nnzX,nnzG);
+          ttaudiff=sprintf('   %+6i',diff);
           if printTau || subspace
-             printf(' %s',[tauFlag subFlag]);
+             printf('  %s',[ttau tauFlag subFlag ttaudiff]);
           end
        end
        printf('\n');
@@ -634,7 +698,9 @@ while 1
           xBest = x;
        end
     end
-    R=[R r];
+    
+    
+    Rr = [Rr, r];
 
 end % while 1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
