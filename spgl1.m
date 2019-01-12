@@ -332,7 +332,7 @@ fOld      = f;
 
 
 %set number for K: the number of iterations in averaging
-K=15; %or K=10
+K=5; %or K=15
 Rr=r;
 fDualMax  = -Inf;
 fDualMax2 = -Inf;
@@ -391,11 +391,15 @@ while 1
         
         % TODO: Decide the number of vectors to keep (tune K) (check)
         
+        
         if iter == K 
             Rr=Rr(:,end-K+1:end); % window, dim: n x K [r1,...rk]
+            
+            printf('\n Start the accelerated mode \n')
+            printf('\n')
         else
             Rr=Rr(:,end-K+2:end); % window, dim: n x K [r2,...rk]
-            Rr=[ydual Rr];   %[raccel Rr]
+            Rr=[ydual Rr];   %[raccel Rr] add ydual from previous iter with k additional cols
         end
         
         [Q,R]=qr(Rr,0); %get the orthog space of Rr, not full QR
@@ -418,7 +422,7 @@ while 1
         
         %Set the parameters for pdco
         H=sparse(K+1+2*n, K+1+2*n); 
-        H(1:K, 1:K)=Q'*Q;
+        H(1:K, 1:K)=speye(K); %= Q'*Q is an identity matrix
         c=[-Q'*b;tau; sparse(2*n,1)]; 
         objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
         Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
@@ -427,9 +431,26 @@ while 1
         bu=Inf(K+1+2*n,1);
         v0=[1;zeros(K+2*n,1)];
         
-       
+        %d1=sparse(K+1+2*n,1);
+        %d1(1:K)=1;
         [v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
-        
+        %[v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        % inform: inform about pdco result. 0: a sol is found, converged
+        %print info about dual subproblem
+        if inform==0
+            printf('\n Dual solution is found \n');
+            printf('%-20s:  %6.1f','pdco solver cputime',time);
+            printf('\n');
+        elseif inform==1
+            printf('\n Too many iterations were required, exceed maximum iterations \n ');
+        elseif inform==2
+            printf('\n Linesearch failed too often \n ');
+        elseif inform==3
+            printf('\n The step lengths became too small \n');
+        else
+            printf('\n Cholesky said ADDA was not positive definite \n ');
+            
+        end
         
         ydual=Q*v(1:K,1); %v=[c,lambda]
         ydual_Norm=norm(ydual,2);
@@ -769,6 +790,7 @@ printf(' %-20s:  %6i %6s %-20s:  %6.1f\n',...
    'Newton iterations',nNewton,'','Mat-vec time (secs)',timeMatProd);
 printf(' %-20s:  %6i %6s %-20s:  %6i\n', ...
    'Line search its',nLineTot,'','Subspace iterations',itnTotLSQR);
+printf(' %-20s:  %6i','Accerlated iteration',iter-K);
 printf('\n');
 
 
