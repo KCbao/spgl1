@@ -348,6 +348,8 @@ else
    gStep = min( stepMax, max(stepMin, 1/dxNorm) );
 end
 
+% add pdco clock
+pdcotime=0;
 
 %----------------------------------------------------------------------
 % MAIN LOOP.
@@ -376,22 +378,7 @@ while 1
     
     if iter>= K 
     %if (true)
-        % TODO: Reset R when updating tau (check)
-        
-        % TODO: Warm start with c = [1,0,...,0,lambda] (check)
-        
-        % TODO: QR of [raccel, R] (check)
-        
-        % TODO: Grow R with latest r, up to K or (K-1) columns, window
-        % (check)
-        
-        % TODO: Choose solver for quadratic programming
-        % pdco by michael saunder, comment out "print"
-        % time how long it takes to solve quad programming (check)
-        
-        % TODO: Decide the number of vectors to keep (tune K) (check)
-        
-        
+   
         if iter == K 
             Rr=Rr(:,end-K+1:end); % window, dim: n x K [r1,...rk]
             
@@ -403,10 +390,7 @@ while 1
         end
         
         [Q,R]=qr(Rr,0); %get the orthog space of Rr, not full QR
-        % TODO: Add weights to the inf norm inequality. (check)
-        % TODO: Make sure that the primal/dual norm is l1/linf (e.g., not
-        %       l1,2 or the like)
-        
+       
         %tic();
         %quadprog:
         %optionsQuad = optimoptions(@quadprog,'Algorithm','trust-region-reflective','Display','off');
@@ -424,22 +408,31 @@ while 1
         H=sparse(K+1+2*n, K+1+2*n); 
         H(1:K, 1:K)=speye(K); %= Q'*Q is an identity matrix
         c=[-Q'*b;tau; sparse(2*n,1)]; 
-        objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
+        %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
+        %include quadratic part into the obj function
         Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
         bvec=sparse(2*n, 1); 
         bl=[-Inf(K+1,1);sparse(2*n,1)]; 
         bu=Inf(K+1+2*n,1);
         v0=[1;zeros(K+2*n,1)];
         
-        %d1=sparse(K+1+2*n,1);
-        %d1(1:K)=1;
-        [v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
-        %[v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        %include quadratic part into the regularization D1
+        d1=sparse(K+1+2*n,1);
+        d1(1:K)=1;
+        
+        pdcoTimeVal = tic();
+        %include quadratic part into the obj function
+        %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        %include quadratic part into the regularization D1
+        [v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        pcdo.timeTotal   = toc(pdcoTimeVal);
+        pdcotime=pdcotime+pcdo.timeTotal;
+        
         % inform: inform about pdco result. 0: a sol is found, converged
         %print info about dual subproblem
         if inform==0
             printf('\n Dual solution is found \n');
-            printf('%-20s:  %6.1f','pdco solver cputime',time);
+            printf('%-20s:  %6.2f','pdco solver cputime',pcdo.timeTotal);
             printf('\n');
         elseif inform==1
             printf('\n Too many iterations were required, exceed maximum iterations \n ');
@@ -452,12 +445,12 @@ while 1
             
         end
         
-        ydual=Q*v(1:K,1); %v=[c,lambda]
+        ydual=Q*v(1:K,1); %v=[c,lambda, s1, s2], c: K x 1
         ydual_Norm=norm(ydual,2);
         gNorm_accel=options.dual_norm(Aprod(ydual,2),weights);
         f_base  = (r'*r)/2; %primal value
-        f_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
-        gap_accel = f_base - f_accel;
+        dual_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
+        gap_accel = f_base - dual_accel;
         rGap_accel    = abs(gap_accel) / max(1,f_base);
         fDualMax2 = max(fDual,fDualMax2);
         
@@ -477,16 +470,19 @@ while 1
     
     
    if iter < K
-     rGap_accel=0;
+     rGap_accel=Inf;
    end
        
        
     % Single tau: Check if we're optimal.
     % The 2nd condition is there to guard against large tau.
     if singleTau
-        if rGap <= optTol || rNorm < optTol*bNorm
+        if iter<= K && (rGap_accel <= optTol || rNorm < optTol*bNorm)
+                stat  = EXIT_OPTIMAL;
+        elseif iter >K && (rGap_accel <= optTol || rNorm < optTol*bNorm) 
                 stat  = EXIT_OPTIMAL;
         end
+       
  
     % Multiple tau: Check if found root and/or if tau needs updating.
     else
@@ -507,7 +503,7 @@ while 1
           if test4, stat=EXIT_SUBOPTIMAL_BP;end  % Found suboptimal BP sol.
           if test3, stat=EXIT_ROOT_FOUND;   end  % Found approx root.
           if test1, stat=EXIT_BPSOL_FOUND;  end  % Resid minim'zd -> BP sol.
-        % 30 Jun 09: Large tau could mean large rGap even near LS sol.
+        % 30 Jun 09: Large tau could mean large rGap_accel even near LS sol.
         %            Move LS check out of this if statement.
         % if test2, stat=EXIT_LEAST_SQUARES; end % Gradient zero -> BP sol.
        end
@@ -720,8 +716,33 @@ while 1
        end
     end
     
-    
-    Rr = [Rr, r];
+    %------------------------------------------------------------------
+    % Update Rr
+    %------------------------------------------------------------------
+    %(a)
+    %Rr = [Rr, r];
+    %
+    if iter< K
+        Rr = [Rr, r];
+    elseif iter == K
+        Rr= [Rr, r];
+        [B,Rb]=qr(Rr,0); %get basis of Rr
+        Rr=B;
+        rGap_prev=rGap;%(b2)
+        %r_pre=r; %(c)
+    else 
+        %update Rr only if rGap_accel is decreasing
+        if rGap_prev>rGap
+            %norm(r_pre-r,2) > eps %(c)
+            
+            Rr=[Rr r];%=[B,r] since Rr=b
+            fprintf("update rGap previous");
+            rGap_prev=rGap; %(b1)
+            %fprintf("update Rr"); %(c)
+            %r_pre=r;%(c)
+        end
+    end
+    %}
 
 end % while 1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -790,7 +811,7 @@ printf(' %-20s:  %6i %6s %-20s:  %6.1f\n',...
    'Newton iterations',nNewton,'','Mat-vec time (secs)',timeMatProd);
 printf(' %-20s:  %6i %6s %-20s:  %6i\n', ...
    'Line search its',nLineTot,'','Subspace iterations',itnTotLSQR);
-printf(' %-20s:  %6i','Accerlated iteration',iter-K);
+printf(' %-20s:  %6i %6s %-20s:  %6.1f','Accerlated iteration',iter-K,'','pdco time (secs)',pdcotime);
 printf('\n');
 
 
