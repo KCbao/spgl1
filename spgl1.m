@@ -332,7 +332,7 @@ fOld      = f;
 
 
 %set number for K: the number of iterations in averaging
-K=5; %or K=15
+K=20; %or K=15
 Rr=r;
 fDualMax  = -Inf;
 fDualMax2 = -Inf;
@@ -386,11 +386,13 @@ while 1
             printf('\n')
         else
             Rr=Rr(:,end-K+2:end); % window, dim: n x K [r2,...rk]
+           
             Rr=[ydual Rr];   %[raccel Rr] add ydual from previous iter with k additional cols
+            
+            
         end
         
         [Q,R]=qr(Rr,0); %get the orthog space of Rr, not full QR
-       
         %tic();
         %quadprog:
         %optionsQuad = optimoptions(@quadprog,'Algorithm','trust-region-reflective','Display','off');
@@ -407,7 +409,7 @@ while 1
         %Set the parameters for pdco
         H=sparse(K+1+2*n, K+1+2*n); 
         H(1:K, 1:K)=speye(K); %= Q'*Q is an identity matrix
-        c=[-Q'*b;tau; sparse(2*n,1)]; 
+        c=[-Q'*b;tau; sparse(2*n,1)];
         %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
         %include quadratic part into the obj function
         Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
@@ -479,8 +481,12 @@ while 1
     if singleTau
         if iter<= K && (rGap_accel <= optTol || rNorm < optTol*bNorm)
                 stat  = EXIT_OPTIMAL;
-        elseif iter >K && (rGap_accel <= optTol || rNorm < optTol*bNorm) 
+        elseif iter >K && (rGap_accel <= optTol || rNorm < optTol*bNorm)
+            if rGap_accel <= optTol
+                fprintf("hello")
                 stat  = EXIT_OPTIMAL;
+            end
+            stat  = EXIT_OPTIMAL;
         end
        
  
@@ -726,20 +732,17 @@ while 1
         Rr = [Rr, r];
     elseif iter == K
         Rr= [Rr, r];
-        [B,Rb]=qr(Rr,0); %get basis of Rr
-        Rr=B;
-        rGap_prev=rGap;%(b2)
-        %r_pre=r; %(c)
+        %[B,Rb]=qr(Rr,0); %get basis of Rr
+        %Rr=B;
     else 
         %update Rr only if rGap_accel is decreasing
-        if rGap_prev>rGap
-            %norm(r_pre-r,2) > eps %(c)
+        if abs(norm(Q'*r,2)^2-rNorm^2) > 10^(-4) && K<=m %(c)
+            Rr=[Q r];
+            fprintf("update Rr"); %(c)
             
-            Rr=[Rr r];%=[B,r] since Rr=b
-            fprintf("update rGap previous");
-            rGap_prev=rGap; %(b1)
-            %fprintf("update Rr"); %(c)
-            %r_pre=r;%(c)
+            if K<m
+                K=K+1;
+            end
         end
     end
     %}
