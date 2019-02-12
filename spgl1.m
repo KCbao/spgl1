@@ -332,10 +332,9 @@ fOld      = f;
 
 
 %set number for K: the number of iterations in averaging
-K=20; %or K=15
-Rr=r;
+K=15; %or K=15
 fDualMax  = -Inf;
-fDualMax2 = -Inf;
+fDualMax2 = -Inf; %fDual vs fDual_accel
 
 
 
@@ -351,6 +350,12 @@ end
 % add pdco clock
 pdcotime=0;
 
+% create array for Rr
+Rr=zeros(m,K+2);
+Rrind=1; %ind for Rr
+%set initial optydual: best ydual so far
+optydual=zeros(m,1);
+
 %----------------------------------------------------------------------
 % MAIN LOOP.
 %----------------------------------------------------------------------
@@ -363,7 +368,7 @@ while 1
    
     % Compute quantities needed for log and exit conditions.
     gNorm   = options.dual_norm(-g,weights); %\|A^T r\|_inf
-    rNorm   = norm(r, 2);
+    rNorm   = norm(r, 2)^2/2;
     gap     = r'*(r-b) + tau*gNorm;
     rGap    = abs(gap) / max(1,f);
     
@@ -375,24 +380,24 @@ while 1
     rError1 = abs(aError1) / max(1,rNorm);
     rError2 = abs(aError2) / max(1,f);
     
-    
-    if iter>= K 
-    %if (true)
    
-        if iter == K 
-            Rr=Rr(:,end-K+1:end); % window, dim: n x K [r1,...rk]
-            
-            printf('\n Start the accelerated mode \n')
-            printf('\n')
-        else
-            Rr=Rr(:,end-K+2:end); % window, dim: n x K [r2,...rk]
-           
-            Rr=[ydual Rr];   %[raccel Rr] add ydual from previous iter with k additional cols
-            
-            
+    
+    if iter <= K 
+         %------------------------------------------------------------------
+         % Update basis of Rr
+         %------------------------------------------------------------------
+        Rr(:,iter+1) = r; 
+    else
+
+        if iter == K+1
+         printf('\n Start the accelerated mode \n')
+         printf('\n')
         end
+        Rr(:,K+1) = optydual;
+        Rr(:,K+2) = r; % add current rk
         
-        [Q,R]=qr(Rr,0); %get the orthog space of Rr, not full QR
+        
+        [Q,R] = qr(Rr,0); %get the orthog space of Rr, not full QR
         %tic();
         %quadprog:
         %optionsQuad = optimoptions(@quadprog,'Algorithm','trust-region-reflective','Display','off');
@@ -405,28 +410,28 @@ while 1
         options1 = pdcoSet;
         options1.Method=22;
         options1.Print=0;
-        
+    
         %Set the parameters for pdco
-        H=sparse(K+1+2*n, K+1+2*n); 
-        H(1:K, 1:K)=speye(K); %= Q'*Q is an identity matrix
+        H=sparse(K+2+1+2*n, K+2+1+2*n); 
+        H(1:K+2, 1:K+2)=speye(K+2); %= Q'*Q is an identity matrix
         c=[-Q'*b;tau; sparse(2*n,1)];
         %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
         %include quadratic part into the obj function
         Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
         bvec=sparse(2*n, 1); 
-        bl=[-Inf(K+1,1);sparse(2*n,1)]; 
-        bu=Inf(K+1+2*n,1);
-        v0=[1;zeros(K+2*n,1)];
+        bl=[-Inf(K+2+1,1);sparse(2*n,1)]; 
+        bu=Inf(K+2+1+2*n,1);
+        v0=[1;zeros(K+2+2*n,1)];
         
         %include quadratic part into the regularization D1
-        d1=sparse(K+1+2*n,1);
-        d1(1:K)=1;
+        d1=sparse(K+2+1+2*n,1);
+        d1(1:K+2)=1;
         
         pdcoTimeVal = tic();
         %include quadratic part into the obj function
         %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
         %include quadratic part into the regularization D1
-        [v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+        [v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+2+1+2*n,1),1,1);
         pcdo.timeTotal   = toc(pdcoTimeVal);
         pdcotime=pdcotime+pcdo.timeTotal;
         
@@ -447,15 +452,32 @@ while 1
             
         end
         
-        ydual=Q*v(1:K,1); %v=[c,lambda, s1, s2], c: K x 1
+        ydual=Q*v(1:K+2,1); %v=[c,lambda, s1, s2], c: (K+2)x 1
         ydual_Norm=norm(ydual,2);
         gNorm_accel=options.dual_norm(Aprod(ydual,2),weights);
         f_base  = (r'*r)/2; %primal value
         dual_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
         gap_accel = f_base - dual_accel;
         rGap_accel    = abs(gap_accel) / max(1,f_base);
-        fDualMax2 = max(fDual,fDualMax2);
-        
+        if dual_accel>fDualMax2
+            %------------------------------------------------------------------
+            % Update basis of Rr
+            %------------------------------------------------------------------
+            optydual=ydual;
+           
+            Rrind=mod(Rrind,K);
+            if Rrind==0
+                Rrind=K;
+            end
+            Rr(:,Rrind)=r;
+            Rrind=Rrind+1;
+            fprintf("update Rr");
+            fprintf("\n");
+           else
+            fprintf('hhhhhhhhhhh \n')
+          
+        end
+        fDualMax2 = max(dual_accel,fDualMax2);
     end
      
 
@@ -473,20 +495,18 @@ while 1
     
    if iter < K
      rGap_accel=Inf;
+     dual_accel=Inf;
    end
        
        
     % Single tau: Check if we're optimal.
     % The 2nd condition is there to guard against large tau.
     if singleTau
-        if iter<= K && (rGap_accel <= optTol || rNorm < optTol*bNorm)
-                stat  = EXIT_OPTIMAL;
-        elseif iter >K && (rGap_accel <= optTol || rNorm < optTol*bNorm)
+        if rGap_accel <= optTol || rNorm < optTol*bNorm
             if rGap_accel <= optTol
                 fprintf("hello")
                 stat  = EXIT_OPTIMAL;
             end
-            stat  = EXIT_OPTIMAL;
         end
        
  
@@ -564,6 +584,7 @@ while 1
           printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG,rGap_accel);
           %printf('%.5e %.5e', fDualMax,fDualMax2);
           printf('[%.5e %.5e]',rGap,rGap_accel);
+          printf('{%.5e %.5e}',fDual,dual_accel);
           if (fDualMax2 > fDualMax), printf('***'); end
           if subspace
              printf('  %s',subFlag);
@@ -722,31 +743,7 @@ while 1
        end
     end
     
-    %------------------------------------------------------------------
-    % Update Rr
-    %------------------------------------------------------------------
-    %(a)
-    %Rr = [Rr, r];
-    %
-    if iter< K
-        Rr = [Rr, r];
-    elseif iter == K
-        Rr= [Rr, r];
-        %[B,Rb]=qr(Rr,0); %get basis of Rr
-        %Rr=B;
-    else 
-        %update Rr only if rGap_accel is decreasing
-        if abs(norm(Q'*r,2)^2-rNorm^2) > 10^(-4) && K<=m %(c)
-            Rr=[Q r];
-            fprintf("update Rr"); %(c)
-            
-            if K<m
-                K=K+1;
-            end
-        end
-    end
-    %}
-
+    
 end % while 1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -785,7 +782,28 @@ info.lambda      = lambda(1:iter);
 % Print final output.
 switch (stat)
    case EXIT_OPTIMAL
-      printf('\n EXIT -- Optimal solution found\n')
+      printf('\n EXIT -- Optimal solution found\n');
+      %---------------------------------------------
+      % info about average mutual coherence
+      %---------------------------------------------
+      [M N] = size(Rr);
+      if (N<2)
+      disp('error - input contains only one column');
+      u=NaN;   beep;    return    
+      end
+      % normalize the columns
+      nn = sqrt(sum(Rr.*conj(Rr),1));
+      if ~all(nn)
+        disp('error - input contains a zero column');
+        u=NaN;   beep;    return
+      end
+      nRr = bsxfun(@rdivide,Rr,nn);  % nRr is a matrix with normalized columns
+      u = 1/(N*(N-1))*sum(sum(triu(abs((nRr')*nRr),1))); 
+      printf('\n average mutual coherence is u = %5f',u); % 0 if they are LI
+      %---------------------------------------------
+      % end average mutual coherence
+      %---------------------------------------------
+
    case EXIT_ITERATIONS
       printf('\n ERROR EXIT -- Too many iterations\n');
    case EXIT_ROOT_FOUND
