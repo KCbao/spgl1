@@ -348,7 +348,7 @@ else
 end
 
 % add pdco clock
-pdcotime=0;
+solverTime=0;
 
 % create array for Rr
 Rr=zeros(m,K+2);
@@ -398,88 +398,41 @@ while 1
         
         
         [Q,R] = qr(Rr,0); %get the orthog space of Rr, not full QR
-        %tic();
-        %quadprog:
-        %optionsQuad = optimoptions(@quadprog,'Algorithm','trust-region-reflective','Display','off');
-        %[v,fquad,exitflag]=quadprog([eye(K), zeros(K,1);zeros(1,K) 0], [-Q'*b;tau],[A'*Q -ones(n,1);-A'*Q -ones(n,1)],zeros(2*n,1)); 
-        %quadtime=toc()
+       
         
-        %pdco:
-        
-        %Set options for pdco
-        options1 = pdcoSet;
-        options1.Method=22;
-        options1.Print=0;
-    
-        %Set the parameters for pdco
-        H=sparse(K+2+1+2*n, K+2+1+2*n); 
-        H(1:K+2, 1:K+2)=speye(K+2); %= Q'*Q is an identity matrix
-        c=[-Q'*b;tau; sparse(2*n,1)];
-        %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
-        %include quadratic part into the obj function
-        Amatrix=[-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
-        bvec=sparse(2*n, 1); 
-        bl=[-Inf(K+2+1,1);sparse(2*n,1)]; 
-        bu=Inf(K+2+1+2*n,1);
-        v0=[1;zeros(K+2+2*n,1)];
-        
-        %include quadratic part into the regularization D1
-        d1=sparse(K+2+1+2*n,1);
-        d1(1:K+2)=1;
-        
-        pdcoTimeVal = tic();
-        %include quadratic part into the obj function
-        %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
-        %include quadratic part into the regularization D1
-        [v,y,z,inform,PDitns,CGitns,time]=pdco(c,Amatrix,bvec,bl,bu,d1,1e-4,options1,v0,sparse(2*n,1),sparse(K+2+1+2*n,1),1,1);
-        pcdo.timeTotal   = toc(pdcoTimeVal);
-        pdcotime=pdcotime+pcdo.timeTotal;
-        
-        % inform: inform about pdco result. 0: a sol is found, converged
-        %print info about dual subproblem
-        if inform==0
-            printf('\n Dual solution is found \n');
-            printf('%-20s:  %6.2f','pdco solver cputime',pcdo.timeTotal);
-            printf('\n');
-        elseif inform==1
-            printf('\n Too many iterations were required, exceed maximum iterations \n ');
-        elseif inform==2
-            printf('\n Linesearch failed too often \n ');
-        elseif inform==3
-            printf('\n The step lengths became too small \n');
-        else
-            printf('\n Cholesky said ADDA was not positive definite \n ');
-            
-        end
-        
-        ydual=Q*v(1:K+2,1); %v=[c,lambda, s1, s2], c: (K+2)x 1
-        ydual_Norm=norm(ydual,2);
-        gNorm_accel=options.dual_norm(Aprod(ydual,2),weights);
+        %mode = input('Enter which solver (1: quadprog; 2: pdco; 3: ASP): ');
+        mode = 4;
+        [ydual,Time] = solver(mode,A,b,K,Q,tau);
+        solverTime = solverTime+Time; % calculate solver time
+        ydual_Norm = norm(ydual,2);
+        gNorm_accel = options.dual_norm(Aprod(ydual,2),weights);
         f_base  = (r'*r)/2; %primal value
         dual_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
+        
         gap_accel = f_base - dual_accel;
         rGap_accel    = abs(gap_accel) / max(1,f_base);
-        if dual_accel>fDualMax2
+        
+        if dual_accel > fDualMax2
             %------------------------------------------------------------------
             % Update basis of Rr
             %------------------------------------------------------------------
-            optydual=ydual;
+            optydual = ydual;
            
-            Rrind=mod(Rrind,K);
-            if Rrind==0
-                Rrind=K;
+            Rrind = mod(Rrind,K);
+            if Rrind == 0
+                Rrind = K;
             end
-            Rr(:,Rrind)=r;
-            Rrind=Rrind+1;
+            Rr(:,Rrind) = r;
+            Rrind = Rrind+1;
             fprintf("update Rr");
             fprintf("\n");
            else
-            fprintf('hhhhhhhhhhh \n')
+            fprintf('not update Rr \n')
           
         end
         fDualMax2 = max(dual_accel,fDualMax2);
     end
-     
+    
 
     % Count number of consecutive iterations with identical support.
     nnzOld = nnzIdx;
@@ -494,8 +447,8 @@ while 1
     
     
    if iter < K
-     rGap_accel=Inf;
-     dual_accel=Inf;
+     rGap_accel = Inf;
+     dual_accel = Inf;
    end
        
        
@@ -832,7 +785,7 @@ printf(' %-20s:  %6i %6s %-20s:  %6.1f\n',...
    'Newton iterations',nNewton,'','Mat-vec time (secs)',timeMatProd);
 printf(' %-20s:  %6i %6s %-20s:  %6i\n', ...
    'Line search its',nLineTot,'','Subspace iterations',itnTotLSQR);
-printf(' %-20s:  %6i %6s %-20s:  %6.1f','Accerlated iteration',iter-K,'','pdco time (secs)',pdcotime);
+printf(' %-20s:  %6i %6s %-20s:  %6.1f','Accerlated iteration',iter-K,'','subproblem solver cost (secs)',solverTime);
 printf('\n');
 
 
