@@ -43,7 +43,7 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             options.Method = 22;
             options.Print = 0; % no print
 
-            
+            pdcoTimeVal = tic();
             %H = sparse(K+2+1+2*n, K+2+1+2*n); 
             %H(1:K+2, 1:K+2) = speye(K+2); %= Q'*Q is an identity matrix
             %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
@@ -61,7 +61,7 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             d1 = zeros(K+2+1+2*n,1); 
             d1(1:K+2) = 1;
 
-            pdcoTimeVal = tic();
+            
             %include quadratic part into the obj function
             %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
             %include quadratic part into the regularization D1
@@ -102,9 +102,10 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
         
         case 4
             % Gurobi
+            GurobiTime = tic();
             
             Q1 = sparse(2*n+K+2+1,2*n+K+2+1);
-            Q1(1:K+2,1:K+2) = 1/2.*speye(K+2);
+            Q1(1:K+2,1:K+2) = 1/2.*Q'*Q;
 
             model.Q = Q1;
             model.obj = [-Q'*b; tau; zeros(2*n,1)];
@@ -119,12 +120,58 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             results = gurobi(model,params);
             
             ydual = Q*results.x(1:K+2);
-            solverTime = results.runtime;
-            %fprintf('Qurobi QP time is : %16e \n', solverTime);
+%             solverTime = results.runtime;
+%             fprintf('Qurobi QP time is : %16e \n', solverTime);
+            solverTime = toc(GurobiTime);
+            
+        case 5
+            % qpopt
+            qpoptTime = tic();
+            H = eye(K+2+1,K+2+1);
+            H(K+2+1,K+2+1) = 0;
+            cvec = [-Q'*b; tau];
+            C = [-A'*Q -ones(n,1) ; A'*Q -ones(n,1)];
+            x = zeros(K+2+1,1);
+            bu = zeros(2*n+K+2+1,1);
+            bu(K+2+1) = +inf;
+            bl = -inf(2*n+K+2+1,1);
+            [x,obj,lambda,istate,iter,inform] = qpopt(C,cvec,H,x,bl,bu,1);
+            ydual = Q*x(1:K+2);
+            solverTime = toc(qpoptTime);
+            
+        case 6 
+            % dqopt
+            dqoptTime = tic();
+            
+            cvec = [-Q'*b; tau];
+            C = [-A'*Q -ones(n,1) ; A'*Q -ones(n,1)];
+            
+            options.printfile = '';
+            options.screen = 'off';
+            
+            
+            [H, x0, xl, xu, bu, bl] = qpoptSetPar(K, m, n);
+            
+            [x,fval,exitFlag,output,lambda,states] = dqopt(H, cvec,...
+                x0, xl, xu, C, bl, bu,options);
+            ydual = Q*x(1:K+2);
+            solverTime = toc(dqoptTime);
             
         otherwise
             disp('other value')
     end
+end
+
+%% local wrapper function for dqopt
+function [H, x0, xl, xu, bu, bl] = qpoptSetPar(K, m, n)
+    H = eye(K+2+1,K+2+1);
+    H(K+2+1,K+2+1) = 0;
+    
+    x0 = ones(K+2+1,1); %initialization
+    xl = -inf(K+2+1,1);
+    xu = inf(K+2+1,1);
+    bu = zeros(2*n,1);
+    bl = -inf(2*n,1);
 end
 
 %% local wrapper function for ASP
@@ -155,8 +202,8 @@ function [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,K)
     options.loglevel = 0;
     options.gaptol = 1e-12;
     [active,state,x,tildev,S,R,inform] = BPdual(tildeA,tildeb,bl,bu,lambdain,[], [], [], [], [], options);
-    tildev
-    %fprintf('hhhhhhh %15e \n ',tildev);
+    
+    
     % inverse transformation 
     v = Dinv * tildev; 
     ydual = v(1:K+2); 
