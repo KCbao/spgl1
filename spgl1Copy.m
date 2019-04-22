@@ -331,8 +331,8 @@ xBest     = x;
 fOld      = f;
 
 
-%set number for K: the number of iterations in averaging
-K=5; %or K=15
+%set number for p: the number of iterations in averaging
+p = 5; %or p=15
 fDualMax  = -Inf;
 fDualMax2 = -Inf; %fDual vs fDual_accel
 
@@ -347,14 +347,12 @@ else
    gStep = min( stepMax, max(stepMin, 1/dxNorm) );
 end
 
-% add pdco clock
-solverTime=0;
+% initialize clock for qp solver
+solverTime = 0;
 
-% create array for Rr
-Rr=zeros(m,K+2);
-Rrind=1; %ind for Rr
-%set initial optydual: best ydual so far
-optydual=zeros(m,1);
+B = zeros(m,p+2); % create matrix B
+Bidx = 1; % index for base set in B
+optydual = zeros(m,1); % initilization of optydual
 
 % pvalue Update: new add
 % pvalue = zeros(73,1);dvalue = zeros(73,1); dGap = zeros(73,1);
@@ -385,36 +383,33 @@ while 1
     
    
     
-    if iter <= K 
-         %------------------------------------------------------------------
-         % Update basis of Rr
-         %------------------------------------------------------------------
-        Rr(:,iter+1) = r; 
+    if iter <= p 
+        B(:,iter+1) = r; % update the base set in B by assembling latest r
         %new add to record 
 %         pvalue(iter+1)= rNorm^2/2; 
 %         dGap(iter+1)=rGap; 
 %         dvalue(iter+1) = fDual;
     else
 
-        if iter == K+1
-         printf('\n Start the accelerated mode \n')
-         printf('\n')
+        if iter == p+1
+            printf('\n Start the accelerated mode \n\n')
         end
-        Rr(:,K+1) = optydual;
-        Rr(:,K+2) = r; % add current rk
+        B(:,p+1) = optydual;
+        B(:,p+2) = r; % add current rk
         
-        
-        [Q,R] = qr(Rr,0); % get the orthog space of Rr, not full QR
+        [Q,R] = qr(B,0); % get the orthog space of B, not full QR
        
-        
         % mode = input('Enter which solver (1: quadprog; 2: pdco; 3: ASP): ');
         mode = 6;
         
-        if iter == K+1
-            se
+        % one-time setup for some arguments for solver
+        if iter == p+1
+            solverarg = solverSetPar(mode, p, A);
+        end
         
-        [ydual,Time] = solver(mode,A,b,K,Q,tau);
-        solverTime = solverTime+Time; % calculate solver time
+        [ydual,Time] = solver(mode,A,b,p,Q,tau,solverarg);
+        %[ydual,Time] = solver(mode,A,b,p,Q,tau);
+        solverTime = solverTime+Time; % accumulate/record qp run-time
         ydual_Norm = norm(ydual,2);
         gNorm_accel = options.dual_norm(Aprod(ydual,2),weights);
         f_base  = (r'*r)/2; % primal value
@@ -428,21 +423,20 @@ while 1
 %         dvalue(iter+1) = dual_accel;
         
         if dual_accel > fDualMax2
-            %------------------------------------------------------------------
-            % Update basis of Rr
-            %------------------------------------------------------------------
+            %--------------------------------------------
+            % Circular buffer to update the base set in B
+            %--------------------------------------------
             optydual = ydual;
            
-            Rrind = mod(Rrind,K);
-            if Rrind == 0
-                Rrind = K;
+            Bidx = mod(Bidx,p);
+            if Bidx == 0
+                Bidx = p;
             end
-            Rr(:,Rrind) = r;
-            Rrind = Rrind+1;
-            fprintf("update Rr");
-            fprintf("\n");
-           else
-            fprintf('not update Rr \n')
+            B(:,Bidx) = r;
+            Bidx = Bidx+1;
+            printf("update B \n");
+        else
+            printf('not update B \n')
           
         end
         fDualMax2 = max(dual_accel,fDualMax2);
@@ -461,7 +455,7 @@ while 1
     end
     
     
-   if iter < K
+   if iter < p
      rGap_accel = Inf;
      dual_accel = Inf;
    end
@@ -523,7 +517,7 @@ while 1
              r = b - Aprod(x,1);  % r = b - Ax
              g =   - Aprod(r,2);  % g = -A'r
              f = r'*r / 2;
-             Rr=r; %reset Rr
+             B=r; %reset B
              X=x;  %reset x
              fDualMax  = -Inf; %reset fDualMax
              fDualMax2 = -Inf;  %reset fDualMax2
@@ -754,19 +748,19 @@ switch (stat)
       %---------------------------------------------
       % info about average mutual coherence
       %---------------------------------------------
-      [M N] = size(Rr);
+      [M N] = size(B);
       if (N<2)
       disp('error - input contains only one column');
       u=NaN;   beep;    return    
       end
       % normalize the columns
-      nn = sqrt(sum(Rr.*conj(Rr),1));
+      nn = sqrt(sum(B.*conj(B),1));
       if ~all(nn)
         disp('error - input contains a zero column');
         u=NaN;   beep;    return
       end
-      nRr = bsxfun(@rdivide,Rr,nn);  % nRr is a matrix with normalized columns
-      u = 1/(N*(N-1))*sum(sum(triu(abs((nRr')*nRr),1))); 
+      nB = bsxfun(@rdivide,B,nn);  % nB is a matrix with normalized columns
+      u = 1/(N*(N-1))*sum(sum(triu(abs((nB')*nB),1))); 
       printf('\n average mutual coherence is u = %5f',u); % 0 if they are LI
       %---------------------------------------------
       % end average mutual coherence
@@ -800,7 +794,7 @@ printf(' %-20s:  %6i %6s %-20s:  %6.1f\n',...
    'Newton iterations',nNewton,'','Mat-vec time (secs)',timeMatProd);
 printf(' %-20s:  %6i %6s %-20s:  %6i\n', ...
    'Line search its',nLineTot,'','Subspace iterations',itnTotLSQR);
-printf(' %-20s:  %6i %6s %-20s:  %6.1f','Accerlated iteration',iter-K,'','subproblem solver cost (secs)',solverTime);
+printf(' %-20s:  %6i %6s %-20s:  %6.1f','Accerlated iteration',iter-p,'','subproblem solver cost (secs)',solverTime);
 printf('\n');
 
 
