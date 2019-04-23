@@ -1,4 +1,4 @@
-function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
+function [ydual, solverTime] = solver(mode, A, b, p, Q, tau, arg)
 %-------------------------------------------------------------
 % Provide different solvers for user to solve dual problem
 % mode 1: built-in quadprog
@@ -16,77 +16,40 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
     switch mode
         case 1
             % quadprob with "interior-point-convex" algorithm
-            % min_x 1/2 xHx+f'x 
+            % min_x 1/2 xHx+c'x 
             % subject to Ax<=b or Aeq x = beq or lb <= x <= up
             
-            options = optimoptions(@quadprog,'Display','off'); 
-            H = [eye(K+2), zeros(K+2,1);zeros(1,K+2) 0]; 
-            f = [Q'*b;-tau];
-            A = [A'*Q -ones(n,1);-A'*Q -ones(n,1)]; 
-            b = zeros(2*n,1); 
+            cvec = [Q'*b;-tau];
+            C = [A'*Q -ones(n,1);-A'*Q -ones(n,1)]; 
+            bu = zeros(2*n,1); 
             
             quadTimeVal = tic();
-            [v,fquad,exitflag] = quadprog(H,f,A,b,[],[],[],[],[],options); 
+            [x,fquad,exitflag] = quadprog(arg{1},cvec,C,arg{2},[],[],[],[],[],arg{3}); 
             solverTime = toc(quadTimeVal);
-
-            ydual = Q*v(1:K+2,1);
-            fprintf('quadprog time is : %16e \n', solverTime);
+            ydual = Q*x(1:p+2,1);
+          
             
         case 2
             % pdco (Primal-Dual Barrier Method)
             %    minimize    phi(x) + 1/2 norm(D1*x)^2 + 1/2 norm(r)^2
             %      x,r
-            %    subject to  A*x + D2*r = b,   bl <= x <= bu,   r unconstrained
+            %    subject to  A*x + D2*r = beq,   bl <= x <= bu,   r unconstrained
             
-           
-            options = pdcoSet;
-            options.Method = 22;
-            options.Print = 0; % no print
-
             pdcoTimeVal = tic();
-            %H = sparse(K+2+1+2*n, K+2+1+2*n); 
-            %H(1:K+2, 1:K+2) = speye(K+2); %= Q'*Q is an identity matrix
+            %H = sparse(p+2+1+2*n, p+2+1+2*n); 
+            %H(1:p+2, 1:p+2) = speye(p+2); %= Q'*Q is an identity matrix
             %objectivefunction = @(x) deal(0.5*(x'*H*x) + c'*x, H*x + c, H);
-            c = [-Q'*b; tau; sparse(2*n,1)];
-            A = [-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
-            b = sparse(2*n, 1); 
-            bl = [-Inf(K+2+1,1);sparse(2*n,1)]; 
-            bu = Inf(K+2+1+2*n,1);
-            
-            % create warm start use previous iteration solution
-            
-            v0 = [0;zeros(K+2+2*n,1)]; % warm start
-            %A*v0 == b
-            
-            d1 = zeros(K+2+1+2*n,1); 
-            d1(1:K+2) = 1;
-
-            
+            cvec = [-Q'*b; tau; sparse(2*n,1)];
+            C = [-A'*Q, -ones(n,1), speye(n), sparse(n,n); A'*Q, -ones(n,1),sparse(n,n), speye(n)];
+           
             %include quadratic part into the obj function
-            %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(K+1+2*n,1),1,1);
+            %[v,y,z,inform,PDitns,CGitns,time]=pdco(objectivefunction,Amatrix,bvec,bl,bu,1e-4,1e-4,options1,v0,sparse(2*n,1),sparse(p+1+2*n,1),1,1);
             %include quadratic part into the regularization D1
-            [v,y,z,inform,PDitns,CGitns,time] = pdco(c,A,b,bl,bu,d1,1e-4,options,v0,sparse(2*n,1),sparse(K+2+1+2*n,1),1,1);
-            %keyboard
+            [v,y,z,inform,PDitns,CGitns,time] = pdco(cvec,C,arg{1},arg{2},arg{3},...
+                arg{5},1e-4,arg{6},arg{4},sparse(2*n,1),sparse(p+2+1+2*n,1),1,1);
             solverTime   = toc(pdcoTimeVal);
+            ydual = Q*v(1:p+2); %v=[c,lambda, s1, s2], c: (p+2)x 1
             
-
-            %print info about dual subproblem
-            switch inform 
-                case 0
-                    fprintf('\n Dual solution is found \n');
-                case 1
-                    fprintf('\n Too many iterations were required, exceed maximum iterations \n ');
-                case 2
-                    fprintf('\n Linesearch failed too often \n ');
-                case 3
-                    fprintf('\n The step lengths became too small \n');
-                otherwise
-                    fprintf('\n Cholesky said ADDA was not positive definite \n ');
-            end
-            ydual = Q*v(1:K+2); %v=[c,lambda, s1, s2], c: (K+2)x 1
-            
-            %fprintf('pdco time is : %16e \n', solverTime);
-            %fprintf('obj value is %15e \n',1/2*(ydual'*ydual)+c(1:K+2)'*v(1:K+2)+tau*v(K+3));
             
         case 3
             % ASP (active-set pursuit)
@@ -95,7 +58,7 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             % subject to bl <= A'y <= bu
             % ---------------------------------
             
-            [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,K);
+            [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,p);
             ydual = Q*ydual;
             fprintf('ASP time is : %16e \n', solverTime);
             
@@ -104,39 +67,32 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             % Gurobi
             GurobiTime = tic();
             
-            Q1 = sparse(2*n+K+2+1,2*n+K+2+1);
-            Q1(1:K+2,1:K+2) = 1/2.*Q'*Q;
+            Q1 = sparse(2*n+p+2+1,2*n+p+2+1);
+            Q1(1:p+2,1:p+2) = 1/2.*Q'*Q;
 
             model.Q = Q1;
             model.obj = [-Q'*b; tau; zeros(2*n,1)];
             model.A = sparse([-A'*Q -ones(n,1) eye(n) zeros(n); A'*Q -ones(n,1) zeros(n) eye(n)]);
             model.rhs = zeros(2*n,1);
             model.sense = '=';
-            lb = zeros(2*n+K+2+1,1); 
-            lb(1:K+2+1) = -inf; 
+            lb = zeros(2*n+p+2+1,1); 
+            lb(1:p+2+1) = -inf; 
             model.lb = lb;
             gurobi_write(model, 'qp.lp');
             params.outputflag = 0; 
             results = gurobi(model,params);
             
-            ydual = Q*results.x(1:K+2);
-%             solverTime = results.runtime;
-%             fprintf('Qurobi QP time is : %16e \n', solverTime);
+            ydual = Q*results.x(1:p+2);
             solverTime = toc(GurobiTime);
             
         case 5
-            % qpopt
+            % qpopt (not recommanded)
             qpoptTime = tic();
-            H = eye(K+2+1,K+2+1);
-            H(K+2+1,K+2+1) = 0;
             cvec = [-Q'*b; tau];
             C = [-A'*Q -ones(n,1) ; A'*Q -ones(n,1)];
-            x = zeros(K+2+1,1);
-            bu = zeros(2*n+K+2+1,1);
-            bu(K+2+1) = +inf;
-            bl = -inf(2*n+K+2+1,1);
-            [x,obj,lambda,istate,iter,inform] = qpopt(C,cvec,H,x,bl,bu,1);
-            ydual = Q*x(1:K+2);
+            [x,obj,lambda,istate,iter,inform] = qpopt(C,cvec,arg{1},arg{2},...
+                arg{3},arg{4},1);
+            ydual = Q*x(1:p+2);
             solverTime = toc(qpoptTime);
             
         case 6 
@@ -149,33 +105,21 @@ function [ydual, solverTime] = solver(mode, A, b, K, Q, tau)
             options.printfile = '';
             options.screen = 'off';
             
-            
-            [H, x0, xl, xu, bu, bl] = qpoptSetPar(K, m, n);
-            
-            [x,fval,exitFlag,output,lambda,states] = dqopt(H, cvec,...
-                x0, xl, xu, C, bl, bu,options);
-            ydual = Q*x(1:K+2);
+            [x,fval,exitFlag,output,lambda,states] = dqopt(arg{1}, cvec,...
+                arg{2}, arg{3}, arg{4}, C, arg{5}, arg{6},options);
+            ydual = Q*x(1:p+2);
             solverTime = toc(dqoptTime);
+            
+        case 7 
+            % ADMM
             
         otherwise
             disp('other value')
     end
 end
 
-%% local wrapper function for dqopt
-function [H, x0, xl, xu, bu, bl] = qpoptSetPar(K, m, n)
-    H = eye(K+2+1,K+2+1);
-    H(K+2+1,K+2+1) = 0;
-    
-    x0 = ones(K+2+1,1); %initialization
-    xl = -inf(K+2+1,1);
-    xu = inf(K+2+1,1);
-    bu = zeros(2*n,1);
-    bl = -inf(2*n,1);
-end
-
 %% local wrapper function for ASP
-function [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,K)
+function [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,p)
     % ASP
     % min_y 1/2 lambda y'y -b'y 
     % subject to bl <= A'y <= bu
@@ -186,9 +130,9 @@ function [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,K)
     % formulation transformation
     delta = 1e-6;
 
-    D = [eye(K+2) zeros(K+2,1); zeros(1,K+2) delta];
+    D = [eye(p+2) zeros(p+2,1); zeros(1,p+2) delta];
     quadb = [Q'*b; -tau];
-    Dinv = [eye(K+2) zeros(K+2,1); zeros(1,K+2) 1/delta];
+    Dinv = [eye(p+2) zeros(p+2,1); zeros(1,p+2) 1/delta];
     tildeb = Dinv*quadb; %since it's diagonal, D^(-1)=1/D  
     quadAprime = [A'*Q -ones(n,1); -A'*Q -ones(n,1)];
     tildeA = Dinv*quadAprime';  
@@ -206,6 +150,6 @@ function [ydual, solverTime, inform] = ASPwrap(A,b,Q,tau,K)
     
     % inverse transformation 
     v = Dinv * tildev; 
-    ydual = v(1:K+2); 
+    ydual = v(1:p+2); 
     solverTime = toc(ASPtimeVal);
 end
