@@ -108,7 +108,7 @@ function [x,r,g,info] = spgl1( A, b, tau, sigma, x, options)
 % 09 Sep 13: Recompute function information at new x when tau decreases.
 %            Fixed bug in subspace minimization. Thanks to Yang Lei
 %            for reporting this bug.
-    
+     
 %   ----------------------------------------------------------------------
 %   This file is part of SPGL1 (Spectral Projected-Gradient for L1).
 %
@@ -334,8 +334,6 @@ fOld      = f;
 %set number for K: the number of iterations in averaging
 K=15; %or K=15
 fDualMax  = -Inf;
-fDualMax2 = -Inf; %fDual vs fDual_accel
-
 
 
 % Compute projected gradient direction and initial steplength.
@@ -351,10 +349,16 @@ end
 solverTime=0;
 
 % create array for Rr
-Rr=zeros(m,K+2);
-Rrind=1; %ind for Rr
+Rr = zeros(m,K+2);
+Rrind = 1; % ind for Rr
 %set initial optydual: best ydual so far
-optydual=zeros(m,1);
+optydual = zeros(m,1);
+
+% set jump-in parameter rho
+% rho = 0.05;
+% rho_iter = ceil(log(K)/log(1+rho));
+rho = 40;
+rho_iter = 1;
 
 %----------------------------------------------------------------------
 % MAIN LOOP.
@@ -364,73 +368,105 @@ while 1
     %------------------------------------------------------------------
     % Test exit conditions.
     %------------------------------------------------------------------
-   
-   
-    % Compute quantities needed for log and exit conditions.
-    gNorm   = options.dual_norm(-g,weights); %\|A^T r\|_inf
     rNorm   = norm(r, 2)^2/2;
-    gap     = r'*(r-b) + tau*gNorm;
-    rGap    = abs(gap) / max(1,f);
     
-    fDual = -(r'*r)/2 + b'*r - tau*gNorm;
-    fDualMax = max(fDual, fDualMax);
-    
-    aError1 = rNorm - sigma;
-    aError2 = f - sigma^2 / 2;
-    rError1 = abs(aError1) / max(1,rNorm);
-    rError2 = abs(aError2) / max(1,f);
-    
-   
-    
-    if iter <= K 
-         %------------------------------------------------------------------
-         % Update basis of Rr
-         %------------------------------------------------------------------
-        Rr(:,iter+1) = r; 
-    else
+    if iter ~= rho_iter*rho+K || iter < K
+        %iter ~= round((1+rho)^rho_iter) || iter < K 
+        %
+        
+        
+        
+        % Compute quantities needed for log and exit conditions.
+        gNorm   = options.dual_norm(-g,weights); %||A^T r||_inf
+        gap     = r'*(r-b) + tau*gNorm;
+        rGap    = abs(gap) / max(1,f);
+        fDual = -(r'*r)/2 + b'*r - tau*gNorm;
+        
+        if iter <= K 
+             %------------------------------------------------------------
+             % Update basis of Rr
+             %------------------------------------------------------------
+            Rr(:,iter+1) = r; 
+            
+            
+        elseif fDual > fDualMax
+                %----------------------------------------------------------
+                % Update basis of Rr
+                %----------------------------------------------------------
 
-        if iter == K+1
-         printf('\n Start the accelerated mode \n')
-         printf('\n')
-        end
-        Rr(:,K+1) = optydual;
-        Rr(:,K+2) = r; % add current rk
-        
-        
-        [Q,R] = qr(Rr,0); %get the orthog space of Rr, not full QR
-       
-        
-        %mode = input('Enter which solver (1: quadprog; 2: pdco; 3: ASP): ');
-        mode = 4;
-        [ydual,Time] = solver(mode,A,b,K,Q,tau);
-        solverTime = solverTime+Time; % calculate solver time
-        ydual_Norm = norm(ydual,2);
-        gNorm_accel = options.dual_norm(Aprod(ydual,2),weights);
-        f_base  = (r'*r)/2; %primal value
-        dual_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
-        
-        gap_accel = f_base - dual_accel;
-        rGap_accel    = abs(gap_accel) / max(1,f_base);
-        
-        if dual_accel > fDualMax2
-            %------------------------------------------------------------------
-            % Update basis of Rr
-            %------------------------------------------------------------------
-            optydual = ydual;
-           
-            Rrind = mod(Rrind,K);
-            if Rrind == 0
-                Rrind = K;
+                Rrind = mod(Rrind,K);
+                if Rrind == 0
+                    Rrind = K;
+                end
+                Rr(:,Rrind) = r;
+                Rrind = Rrind+1;
+                fprintf("assemble Rr \n");
+
+         else
+                %fprintf('not assemble Rr \n')
+
+         end
+         fDualMax = max(fDual, fDualMax);
+
+         aError1 = rNorm - sigma;
+         aError2 = f - sigma^2 / 2;
+         rError1 = abs(aError1) / max(1,rNorm);
+         rError2 = abs(aError2) / max(1,f);
+    
+    
+    else 
+        rho_iter = rho_iter+1;
+
+        if iter <= K 
+             %------------------------------------------------------------
+             % Update basis of Rr
+             %------------------------------------------------------------
+            Rr(:,iter+1) = r; 
+        else
+
+            printf('\n Start the accelerated mode \n')
+            
+            
+            Rr(:,K+1) = optydual;
+            Rr(:,K+2) = r; % add current rk
+
+
+            [Q,R] = qr(Rr,0); % get the orthog space of Rr, not full QR
+
+
+            % mode = input('Enter which solver (1: quadprog; 2: pdco; 3: ASP): ');
+            mode = 4;
+            [ydual,Time] = solver(mode,A,b,K,Q,tau);
+            solverTime = solverTime+Time; % calculate solver time
+            
+            gNorm_accel = options.dual_norm(Aprod(ydual,2),weights);
+            f_base  = (r'*r)/2; % primal value
+            dual_accel = -(ydual'*ydual)/2 + ydual'*b - tau*gNorm_accel;
+            
+
+            gap_accel = f_base - dual_accel;
+            rGap    = abs(gap_accel) / max(1,f_base);
+
+            if dual_accel > fDualMax
+                %----------------------------------------------------------
+                % Update basis of Rr
+                %----------------------------------------------------------
+                optydual = ydual;
+
+                Rrind = mod(Rrind,K);
+                if Rrind == 0
+                    Rrind = K;
+                end
+                Rr(:,Rrind) = r;
+                Rrind = Rrind+1;
+                fprintf("update Rr \n");
+                
+            else
+                %fprintf('not update Rr \n')
+
             end
-            Rr(:,Rrind) = r;
-            Rrind = Rrind+1;
-            fprintf("update Rr");
-            fprintf("\n");
-           else
-            fprintf('not update Rr \n')
-          
+            fDualMax = max(dual_accel,fDualMax);
         end
-        fDualMax2 = max(dual_accel,fDualMax2);
     end
     
 
@@ -455,8 +491,8 @@ while 1
     % Single tau: Check if we're optimal.
     % The 2nd condition is there to guard against large tau.
     if singleTau
-        if rGap_accel <= optTol || rNorm < optTol*bNorm
-            if rGap_accel <= optTol
+        if rGap <= optTol || rNorm < optTol*bNorm
+            if rGap <= optTol
                 fprintf("hello")
                 stat  = EXIT_OPTIMAL;
             end
@@ -536,9 +572,9 @@ while 1
           %printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG);
           printf(logB,iter,rNorm,rGap,gNorm,log10(stepG),nnzX,nnzG,rGap_accel);
           %printf('%.5e %.5e', fDualMax,fDualMax2);
-          printf('[%.5e %.5e]',rGap,rGap_accel);
-          printf('{%.5e %.5e}',fDual,dual_accel);
-          if (fDualMax2 > fDualMax), printf('***'); end
+          %printf('[%.5e %.5e]',rGap,rGap_accel);
+          %printf('{%.5e %.5e}',fDual,dual_accel);
+          %if (fDualMax2 > fDualMax), printf('***'); end
           if subspace
              printf('  %s',subFlag);
           end
