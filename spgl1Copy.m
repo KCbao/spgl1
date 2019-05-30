@@ -332,7 +332,7 @@ fOld      = f;
 
 
 %set number for p: the number of iterations in averaging
-p = 5; %or p=15
+p = 70; %or p=15
 fDualMax  = -Inf;
 fDualMax2 = -Inf; %fDual vs fDual_accel
 
@@ -355,7 +355,10 @@ Bidx = 1; % index for base set in B
 optydual = zeros(m,1); % initilization of optydual
 
 % pvalue Update: new add
-% pvalue = zeros(73,1);dvalue = zeros(73,1); dGap = zeros(73,1);
+% counts = 2060;
+% pvalue = zeros(counts,1);dvalue = zeros(counts,1); dGap = zeros(counts,1);
+%video = VideoWriter('residual.avi');
+% video.FrameRate = 5;
 
 %----------------------------------------------------------------------
 % MAIN LOOP.
@@ -386,9 +389,9 @@ while 1
     if iter <= p 
         B(:,iter+1) = r; % update the base set in B by assembling latest r
         %new add to record 
-%         pvalue(iter+1)= rNorm^2/2; 
-%         dGap(iter+1)=rGap; 
-%         dvalue(iter+1) = fDual;
+        pvalue(iter+1)= rNorm; 
+        dGap(iter+1) = rGap; 
+        dvalue(iter+1) = fDual;
     else
 
         if iter == p+1
@@ -400,15 +403,16 @@ while 1
         [Q,R] = qr(B,0); % get the orthog space of B, not full QR
        
         % mode = input('Enter which solver (1: quadprog; 2: pdco; 3: ASP): ');
-        mode = 6;
+        mode = 4;
         
-        % one-time setup for some arguments for solver
-        if iter == p+1
-            solverarg = solverSetPar(mode, p, A);
-        end
+%         one-time setup for some arguments for solver
+%         if iter == p+1
+%             solverarg = solverSetParms(mode, p, A);
+%         end
         
-        [ydual,Time] = solver(mode,A,b,p,Q,tau,solverarg);
-        %[ydual,Time] = solver(mode,A,b,p,Q,tau);
+%          [ydual,Time] = solver(mode,A,b,p,Q,tau,solverarg);
+        [ydual,Time] = solver(mode,A,b,p,Q,tau);
+%         [ydual,Time] = solver(mode,A,b,p,Q,tau,video,iter);
         solverTime = solverTime+Time; % accumulate/record qp run-time
         ydual_Norm = norm(ydual,2);
         gNorm_accel = options.dual_norm(Aprod(ydual,2),weights);
@@ -418,9 +422,9 @@ while 1
         gap_accel = f_base - dual_accel;
         rGap_accel    = abs(gap_accel) / max(1,f_base);
         %new add to record 
-%         pvalue(iter+1)= rNorm^2/2; 
-%         dGap(iter+1)=rGap_accel; 
-%         dvalue(iter+1) = dual_accel;
+        pvalue(iter+1)= rNorm; 
+        dGap(iter+1) = rGap_accel; 
+        dvalue(iter+1) = dual_accel;
         
         if dual_accel > fDualMax2
             %--------------------------------------------
@@ -467,6 +471,7 @@ while 1
         if rGap_accel <= optTol || rNorm < optTol*bNorm
             if rGap_accel <= optTol
                 fprintf("hello")
+%                 close(video);
                 stat  = EXIT_OPTIMAL;
             end
         end
@@ -748,20 +753,20 @@ switch (stat)
       %---------------------------------------------
       % info about average mutual coherence
       %---------------------------------------------
-      [M N] = size(B);
-      if (N<2)
-      disp('error - input contains only one column');
-      u=NaN;   beep;    return    
-      end
-      % normalize the columns
-      nn = sqrt(sum(B.*conj(B),1));
-      if ~all(nn)
-        disp('error - input contains a zero column');
-        u=NaN;   beep;    return
-      end
-      nB = bsxfun(@rdivide,B,nn);  % nB is a matrix with normalized columns
-      u = 1/(N*(N-1))*sum(sum(triu(abs((nB')*nB),1))); 
-      printf('\n average mutual coherence is u = %5f',u); % 0 if they are LI
+%       [M N] = size(B);
+%       if (N<2)
+%       disp('error - input contains only one column');
+%       u=NaN;   beep;    return    
+%       end
+%       % normalize the columns
+%       nn = sqrt(sum(B.*conj(B),1));
+%       if ~all(nn)
+%         disp('error - input contains a zero column');
+%         u=NaN;   beep;    return
+%       end
+%       nB = bsxfun(@rdivide,B,nn);  % nB is a matrix with normalized columns
+%       u = 1/(N*(N-1))*sum(sum(triu(abs((nB')*nB),1))); 
+%       printf('\n average mutual coherence is u = %5f',u); % 0 if they are LI
       %---------------------------------------------
       % end average mutual coherence
       %---------------------------------------------
