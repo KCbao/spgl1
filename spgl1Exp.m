@@ -335,7 +335,7 @@ fOld      = f;
 
 
 %set number for p: the number of iterations in averaging
-p = 15; %or p=15
+p = 10; %or p=15
 fDualMax  = -Inf;
 fDualMax2 = -Inf; %fDual vs fDual_accel
 
@@ -357,8 +357,9 @@ B = zeros(m,p+2); % create matrix B
 Bidx = 1; % index for base set in B
 optydual = zeros(m,1); % initilization of optydual
 dualFlag = 0; % flag of dual problem activation
-iterExp = 0;
-ccccount = 0;
+iterExp = 1;
+fastFlag = 0; % flag of doing dual problem every iteration
+
 
 
 % pvalue Update: new add
@@ -404,7 +405,7 @@ while 1
      
     % when primal value is small enough, we start using subspace dual
     % method for dual problem
-    if rGap <= 5.0e-3 && dualFlag == 0
+    if rGap <= 1.0e-3 && dualFlag == 0
         dualFlag = 1;
         printf('\n Start the accelerated mode\n\n');
         % 7: nargout for dqopt
@@ -412,14 +413,27 @@ while 1
         [varargout{1:7}] = solverSetParms(solverNum, p, A); % one-time setup for some arguments for solver
         
         baseIter = iter; % record current iteration number
+        expValue = 2^iterExp;
+        expCount = expValue;
+        
     end
     
         
-    if dualFlag == 1 && (iter == baseIter + ceil((1.5)^iterExp))
+    if dualFlag == 1 && (iter == baseIter + expValue)
+        baseIter = baseIter + expValue;
+        if expCount == 0 && fastFlag == 0
+            iterExp = iterExp+1; % update iteration exponent
+            expValue = 2^iterExp;
+            expCount = expValue; 
+        end
+        
+        if fastFlag == 1
+            expValue = 4; 
+            printf('start every other iteration');
+        end
         printf('hahahaahhhhhhhhhh');
-        ccccount = ccccount +1;
         printf('%15e',iterExp);
-        printf('%15e',ccccount);
+        
         B(:,p+1) = optydual;
         B(:,p+2) = r; % add current rk
         [Q,R] = qr(B,0); % get the orthog space of B, not full QR
@@ -455,7 +469,12 @@ while 1
         end
         fDualMax2 = max(dual_accel,fDualMax2);
         
-        iterExp = iterExp+1; % update iteration exponent
+        expCount = expCount - 1; 
+        
+        if rGap_accel <= 2.0e-04
+            fastFlag = 1;
+        end
+        
     end
     
 
