@@ -96,14 +96,15 @@ The algorithm implemented by SPGL1 is described in the paper
 
 5. Changes done by Casie
 --------------------
-- Add dual mode to spgl1
+- Add dual mode to spgl1.m
 
 - Include four options of quadratic programming solvers:
-  quadprog (MATLAB built-in), PDCO (by Michael Saunder), Gurobi (commercial optimization toolbox), DNOPT (by Philip E Gill, Michael A Saunders and Elizabeth Wong)
+  quadprog (MATLAB built-in), PDCO (by Michael Saunder), Gurobi (commercial optimization      
+  toolbox), DNOPT (by Philip E Gill, Michael A Saunders and Elizabeth Wong)
 
-- solverSetPerms.m, setSolverPath.m: these files is to set solver parameters and add path  
-  				     to current directory
+- solverSetPerms.m, setSolverPath.m: these files are to set QP solvers' parameters and add   
+                                     path to current directory, respectively
 
-- solver.m: a function for call specific solver to solve the QP problem, and return 
+- solver.m: a function for calling specific solver to solve the QP problem, and return 
   	    QP solution
 
