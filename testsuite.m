@@ -1,11 +1,30 @@
 rng('default') % set a pointer to 0
-% Choose a test problem by problem index
+% --------------------------------------------------------------
+%   Choose a test problem
+% --------------------------------------------------------------
 index = 3; 
 [A, b, tau, options] = generateProblem(index);
+
+% --------------------------------------------------------------
+%   Set options of spgl1
+% --------------------------------------------------------------
 options.dualMode = 1;
 % options.hybridMode = 1; 
-% original spgl1
+% set dual solver path
+% e.g., 
+pdco_dir = '/Users/casiebao/Dropbox/Research/spgl1/pdco-master';
+options.solverPathDir = pdco_dir;
+options.solverNum = 2; % choose solver pdco
+% e.g., Or
+% dnopt_dir = '/Users/casiebao/Dropbox/Research/spgl1/dnopt';
+% options.solverPathDir = dnopt_dir;
+% options.solverNum = 4; % choose solver dnopt
+
+% --------------------------------------------------------------
+%  spgl1
+% --------------------------------------------------------------
 x = spgl1(A,b,tau,[],[],options); 
+
 %% Private function generateProblem
 function [A, b, tau, options]=generateProblem(index)
   

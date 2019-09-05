@@ -45,6 +45,8 @@ parametersClassic = {...
     {'dualMode',    '0 = classic, 1= subspace dual', '0'}, ... % KC: Subspace dual method
     {'p',           'positive integer',           '7'   },... % KC: size of matrix B
     {'rGapTol',     'positive scalar',           '1e-03'},... % KC: when to start dual method
+    {'solverPathDir','string directory',          'path'},...% KC: add solver path
+    {'solverNum',    '1= quadprog, 2=pdco, 3=gurobi, 4=dnopt', '1'},... %KC: solver Num
    };
 
 
@@ -76,6 +78,8 @@ parametersHybrid = ...
     {'dualMode',    '0 = classic, 1= subspace dual', '0'}, ... % KC: Subspace dual method
     {'p',           'positive integer',           '7'   },... % KC: size of matrix B
     {'rGapTol',     'positive scalar',           '1e-03'},... % KC: when to start dual method
+    {'solverPathDir','string directory',          'path'},...% KC: add solver path
+    {'solverNum',    '1= quadprog, 2=pdco, 3=gurobi, 4=dnopt', '1'},... %KC: solver Num
    };
 
 

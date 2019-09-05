@@ -1,4 +1,4 @@
-function [x,r,g,info] = spgl1( A, b, tau, sigma, x, varargin )
+function [x,r,g,info] = spgl1( A, b, tau, sigma, x, varargin)
 %SPGL1  Solve basis pursuit, basis pursuit denoise, and LASSO
 %
 % [x, r, g, info] = spgl1(A, b, tau, sigma, x0, options)
@@ -506,8 +506,9 @@ solveDual = 0;
 % Dual solvers
 % -------------------------------------------------------------
 qpSolverTime = 0; % Initialize clock for qp solver
-solverNum = 3; % Choose dqopt
-setSolverPath(solverNum); % Add solver path 
+solverNum = options.solverNum; 
+solverPathDir = options.solverPathDir; % set solver path
+setSolverPath(solverNum, solverPathDir); % Add solver path 
 % One-time setup for some arguments for qp solver
 argout = solverSetParms(solverNum, p, A); 
 
