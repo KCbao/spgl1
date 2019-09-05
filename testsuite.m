@@ -12,11 +12,11 @@ options.dualMode = 1;
 % options.hybridMode = 1; 
 % set dual solver path
 % e.g., 
-pdco_dir = '/Users/casiebao/Dropbox/Research/spgl1/pdco-master';
+pdco_dir = '/path/to/dnopt/directory';
 options.solverPathDir = pdco_dir;
 options.solverNum = 2; % choose solver pdco
 % e.g., Or
-% dnopt_dir = '/Users/casiebao/Dropbox/Research/spgl1/dnopt';
+% dnopt_dir = '/path/to/dnopt/directory';
 % options.solverPathDir = dnopt_dir;
 % options.solverNum = 4; % choose solver dnopt
 
